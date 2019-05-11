@@ -1,0 +1,511 @@
+<!DOCTYPE html encoding="utf-8">
+
+<html manifest="whiteboard.mf">
+
+<head>
+    <title>WhiteBoard</title>
+
+    <meta name="application-name" content="WhiteBoard" />
+    <meta name="author" content="Paolo Caressa" />
+
+    <!-- SmartPhone Stuff -->
+    <meta name="handheldfriendly" content="yes" />
+    
+    <!-- No telephone number detections -->
+    <meta name="format-detection" content="telephone=no" />
+
+    <!-- iPhone stuff -->
+    <meta name="viewport" content="user-scalable=no, width=device-width" /> 
+    <meta name="apple-mobile-web-app-capable" content="yes" /> 
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+<!--
+    <link rel="apple-touch-icon" href="./whiteboard_57x57.png" sizes="57x57" />
+    <link rel="apple-touch-icon" href="./whiteboard_114x114.png" sizes="114x114" />
+    <link rel="apple-touch-icon-precomposed" href="./whiteboard_57x57.png" sizes="57x57" />
+    <link rel="apple-touch-icon-precomposed" href="./whiteboard_114x114.png" sizes="114x114" />
+    <link rel="apple-touch-startup-image" href="./whiteboard.png" media="(device-width: 640px)" sizes="640x920" />
+    <link rel="apple-touch-startup-image" href="./whiteboard_320x460.png" media="(device-width: 320px)" sizes="320x460" />
+-->
+    <style>
+        @media screen {
+            body {
+                color: white;
+                background-color: black;
+                font-family: sans-serif; font-size: 1em;
+                margin: 0;
+                padding: 0;
+                text-align: justify;
+            }
+            canvas {
+                color: black;
+                background-color: white;
+            }
+        }
+
+        @media handheld {
+            body {
+                color: white;
+                background-color: black;
+                font-family: courier; font-size: 5%;
+                margin: 0;
+                padding: 0;
+                text-align: justify;
+            }
+            canvas {
+                color: black;
+                background-color: white;
+            }
+        }
+    </style>
+
+
+    <script type="text/javascript">
+//<![CDATA[
+
+var VERSION = "1.0";
+
+// var HSIZE = 320, VSIZE = 320;
+// var HSIZE = screen.availWidth, VSIZE = screen.availHeight;
+var HSIZE = window.innerWidth, VSIZE = window.innerHeight;
+
+var COLORI = [
+    "#000000",
+    "#0000FF",
+    "#00FF00",
+    "#FF0000",
+    "#FFFFFF",
+];
+var N_COLORI = COLORI.length;
+
+var N_PULSANTI = 15; // Penna, linea, rettangolo, rettangolo pieno, cerchio, cerchio pieno, undo, "+", "-", cancella, nuova slide, slide prima, slide dopo, prima slide, ultima slide
+
+var BSIZE = VSIZE * 0.05;
+var BSIZE = VSIZE / (N_COLORI + N_PULSANTI);
+
+var PEN_FGCOLOR = "#000000";
+var PEN_BGCOLOR = "#FFFFFF";
+var PEN_WIDTH = 3;  /// spessore del tratto che si disegna
+
+var MODES = "PLcCrR";
+var MODE = "P"; /// modo del disegno: Punti, Linee, Cerchi pieni, cerchi, Rettangoli pieni, rettangoli
+
+var MOUSE_DOWN = false;
+
+var XLAST = -1, YLAST = -1;     /// coord dell'ultimo punto disegnato
+
+/// SLIDES contiene l'elenco delle immagini che fanno da sfondo
+var SLIDES = [];
+
+/// Indice in SLIDES della slide corrente.
+var SLIDE_CURRENT = 0;
+
+/// IMAGE_LAST e' uno stack di immagini per gli undo
+var IMAGE_LAST = [];
+
+/// IMAGE_TEMP e' usato per salvare il disegno mentre si sposta il mouse per
+/// disegnare un rettangolo o un cerchio che vengono mostrati solo temporaneamente
+var IMAGE_TEMP = null;
+
+/// Inizializzazione
+function whiteboard_init()
+{
+    var c = document.getElementById("grafico");
+    c.width = HSIZE;
+    c.height = VSIZE;
+    c.lineWidth = PEN_WIDTH;
+
+    var ctx = c.getContext("2d");
+    var img_list = document.images;
+    
+    for (var i = 0; i < img_list.length; ++ i ) {
+        var img = img_list[i];
+        ctx.drawImage(img, (BSIZE+ (HSIZE-img.width))/2, (VSIZE-img.height)/2);
+        SLIDES[SLIDE_CURRENT] = ctx.getImageData(BSIZE, 0, HSIZE, VSIZE);
+        ++ SLIDE_CURRENT;
+    }
+    SLIDE_CURRENT = 0
+
+    whiteboard_clear();
+    whiteboard_bar();
+    whiteboard_slide_save();
+    whiteboard_saveimage();
+}
+
+/// Cancella lo schermo
+function whiteboard_clear()
+{
+    var ctx = document.getElementById("grafico").getContext("2d");
+    //ctx.fillStyle = PEN_BGCOLOR;
+    //ctx.fillRect(0, 0, HSIZE, VSIZE);
+    // ctx.putImageData(SLIDES[SLIDE_CURRENT], BSIZE, 0);
+    if ( IMAGE_LAST.length > 0 ) {
+        ctx.putImageData(IMAGE_LAST[0], BSIZE, 0);
+        IMAGE_LAST = [ IMAGE_LAST[0] ];
+    } else {
+        ctx.putImageData(SLIDES[SLIDE_CURRENT], BSIZE, 0);
+    }
+}
+
+/// Salva la slide corrente
+function whiteboard_slide_save()
+{
+    var c = document.getElementById("grafico");
+    var ctx = c.getContext("2d");
+    if ( SLIDES.length == 0 ) {
+        SLIDE_CURRENT = 0;
+        SLIDES = [ctx.getImageData(BSIZE, 0, HSIZE, VSIZE)];
+    } else {
+        SLIDES[SLIDE_CURRENT] = ctx.getImageData(BSIZE, 0, HSIZE, VSIZE);
+    }
+    // Distrugge lo stack degli undo
+    IMAGE_LAST = [];
+}
+
+/// Mostra la slide corrente
+function whiteboard_slide_show()
+{
+    var c = document.getElementById("grafico");
+    var ctx = c.getContext("2d");
+    ctx.putImageData(SLIDES[SLIDE_CURRENT], BSIZE, 0);
+}
+
+/// Salva l'immagine corrente su un imagedata 
+function whiteboard_saveimage()
+{
+    var c = document.getElementById("grafico");
+    var ctx = c.getContext("2d");
+    IMAGE_LAST.unshift(ctx.getImageData(BSIZE, 0, HSIZE, VSIZE));
+}
+
+/// Recupera l'immagine salvata
+function whiteboard_restoreimage()
+{
+    var c = document.getElementById("grafico");
+    var ctx = c.getContext("2d");
+    if ( IMAGE_LAST.length > 0 ) {
+        ctx.putImageData(IMAGE_LAST[0], BSIZE, 0);
+        IMAGE_LAST.shift();
+    }
+}
+
+/// Ridisegna la barra degli strumenti
+function whiteboard_bar()
+{
+    // Lettera che determina il modo di disegno
+    var ctx = document.getElementById("grafico").getContext("2d");
+
+    // Disegna lo sfondo dell'area senza barra
+    ctx.fillStyle = "#FFFFFF";
+    ctx.fillRect(0, 0, BSIZE, (N_COLORI+N_PULSANTI)*BSIZE);
+
+    // Disegna i pulsanti: "<", "+", "-"
+    ctx.font = (BSIZE*0.8) + "pt Courier";
+    ctx.fillStyle = PEN_FGCOLOR;
+    // ctx.fillText(MODE, 1, BSIZE-1);
+    ctx.fillText("•", 0, BSIZE);   // punto
+    ctx.fillText("\\", 0, BSIZE*2);   // linea  
+    ctx.fillText("⭘", 0, BSIZE*3);   // cerchio vuoto
+    ctx.fillText("⬤", 0, BSIZE*4);   // cerchio pieno
+    ctx.fillText("☐", 0, BSIZE*5);   // rettangolo vuoto
+    ctx.fillText("∎", 0, BSIZE*6);   // rettangolo pieno
+    ctx.fillStyle = "#000000";
+    ctx.fillText("↺", 0, BSIZE*7);   // undo
+    ctx.fillText("+", 0, BSIZE*8);
+    ctx.fillText("-", 0, BSIZE*9);
+    ctx.fillText("C", 0, BSIZE*10);
+    ctx.fillText("N", 0, BSIZE*11);
+    ctx.fillText("◄", 0, BSIZE*12);
+    ctx.fillText("►", 0, BSIZE*13);
+    ctx.fillText("⏮", 0, BSIZE*14);
+    ctx.fillText("⏭", 0, BSIZE*15);
+
+    // Disegna la barra dei colori in alto.
+    for ( var i = 0; i < N_COLORI; ++ i ) {
+        ctx.fillStyle = COLORI[i];
+        ctx.fillRect(0, (N_PULSANTI+i)*BSIZE, BSIZE, (N_PULSANTI+1+i)*BSIZE);
+    }
+
+    // Disegna il contorno e la griglia della barra
+    ctx.strokeStyle = "#000000";
+    ctx.beginPath();
+    ctx.lineWidth = 1;
+    ctx.rect(0, 0, BSIZE, (N_COLORI + N_PULSANTI)*BSIZE);
+    for ( i = 0; i < N_COLORI + N_PULSANTI; ++ i ) {
+        ctx.moveTo(0, BSIZE*i);
+        ctx.lineTo(BSIZE, BSIZE*i);
+    }
+    ctx.stroke();
+    ctx.closePath();
+    ctx.lineWidth = PEN_WIDTH;  // IMPORTANTE
+}
+
+/// Gestisce un click: se sulla barra degli strumenti esegue un comando
+function whiteboard_click( x, y )
+{
+    if ( x < BSIZE && y > 0 ) {
+        // In base al valore di y decide su quale pulsante si e' cliccato:
+        if ( y < BSIZE ) {
+            // Seleziona tratto pen
+            MODE = MODES[0];
+        } else if ( y < BSIZE * 2 ) {
+            // Seleziona linea
+            MODE = MODES[1];
+        } else if ( y < BSIZE * 3 ) {
+            // Seleziona rettangolo vuoto
+            MODE = MODES[2];
+        } else if ( y < BSIZE * 4 ) {
+            // Seleziona rettangolo pieno
+            MODE = MODES[3];
+        } else if ( y < BSIZE * 5 ) {
+            // Seleziona cerchio vuoto
+            MODE = MODES[4];
+        } else if ( y < BSIZE * 6 ) {
+            // Seleziona cerchio pieno
+            MODE = MODES[5];
+        } else if ( y < BSIZE * 7 ) {
+            // UNDO
+            whiteboard_restoreimage();
+        } else if ( y < BSIZE * 8 ) {
+            // Premuto il pulsante "+"
+            if ( PEN_WIDTH < BSIZE ) {
+                PEN_WIDTH += 2;
+                document.getElementById("grafico").getContext("2d").lineWidth = PEN_WIDTH;
+            }
+        } else if ( y < BSIZE * 9 ) {
+            // Premuto il pulsante "-"
+            if ( PEN_WIDTH > 1 ) {
+                PEN_WIDTH -= 2;
+                document.getElementById("grafico").getContext("2d").lineWidth = PEN_WIDTH;
+            }
+        } else if ( y < BSIZE * 10 ) {
+            // Pulsante "C" cancella lo schermo
+            whiteboard_clear();
+        } else if ( y < BSIZE * 11 ) {
+            // Nuova slide
+            whiteboard_slide_save();
+            whiteboard_clear();
+            if ( SLIDE_CURRENT == SLIDES.length - 1 ) {
+                SLIDES.push(document.getElementById("grafico").getContext("2d").getImageData(BSIZE, 0, HSIZE, VSIZE));
+            } else {
+                SLIDES.splice(SLIDE_CURRENT, 0, document.getElementById("grafico").getContext("2d").getImageData(BSIZE, 0, HSIZE, VSIZE));
+            }
+            ++ SLIDE_CURRENT;
+        } else if ( y < BSIZE * 12 ) {
+            // Slide precedente
+            if ( SLIDE_CURRENT > 0 ) {
+                whiteboard_slide_save();
+                -- SLIDE_CURRENT;
+                whiteboard_slide_show();
+            }
+        } else if ( y < BSIZE * 13 ) {
+            // Slide seguente
+            if ( SLIDE_CURRENT < SLIDES.length - 1 ) {
+                whiteboard_slide_save();
+                ++ SLIDE_CURRENT;
+                whiteboard_slide_show();
+            }
+        } else if ( y < BSIZE * 14 ) {
+            // Prima slide
+            if ( SLIDE_CURRENT > 0 ) {
+                whiteboard_slide_save();
+                SLIDE_CURRENT = 0;
+                whiteboard_slide_show();
+            }
+        } else if ( y < BSIZE * 15 ) {
+            // Ultima slide
+            if ( SLIDE_CURRENT < SLIDES.length - 1 ) {
+                whiteboard_slide_save();
+                SLIDE_CURRENT = SLIDES.length - 1;
+                whiteboard_slide_show();
+            }
+        } else if ( y < BSIZE * (N_PULSANTI + N_COLORI) ) {
+            var i = parseInt((y - BSIZE * N_PULSANTI) / BSIZE);
+            PEN_FGCOLOR = COLORI[i];
+        }
+        whiteboard_bar();
+    } else {
+        XLAST = x;
+        YLAST = y;
+    }
+}
+
+/// Gestisce quando si preme il mouse o il dito sullo schermo.
+function whiteboard_start(x, y)
+{
+    if ( x < BSIZE ) {
+        whiteboard_click(x, y);
+        MOUSE_DOWN = false;
+    } else {
+        whiteboard_saveimage();
+        MOUSE_DOWN = true;
+        XLAST = x;
+        YLAST = y;
+        whiteboard_move(x, y);
+    }
+}
+
+/// Gestisce il movimento del mouse o del dito poggiato sullo schermo
+function whiteboard_move(x, y)
+{
+    if ( MOUSE_DOWN ) {
+        if ( x >= BSIZE ) {
+            var c = document.getElementById("grafico");
+            var ctx = c.getContext("2d");
+            ctx.strokeStyle = PEN_FGCOLOR;
+            ctx.fillStyle = PEN_FGCOLOR;
+            // A seconda di mode fa cose diverse
+            switch ( MODE ) {
+            case "P":   // Disegna una linea tra (XLAST,YLAST) e (x,y)
+                // Disegna un punto
+                ctx.beginPath();
+                ctx.moveTo(XLAST, YLAST);
+                ctx.lineTo(x, y);
+                ctx.stroke();
+                ctx.closePath();
+                break;
+            case "L":   // La linea la disegnera' alla fine
+                if ( IMAGE_TEMP != null ) {
+                    // ripristina il disegno
+                    ctx.putImageData(IMAGE_TEMP, 0, 0);
+                }
+                IMAGE_TEMP = ctx.getImageData(0, 0, HSIZE, VSIZE);
+                // Disegna temporaneamente il rettangolo
+                ctx.beginPath();
+                ctx.moveTo(XLAST, YLAST);
+                ctx.lineTo(x, y);
+                ctx.stroke();
+                ctx.closePath();
+                return; // NON BREAK!!!
+            case "c":   // Il cerchio lo disegnera' alla fine
+            case "C":   // Il cerchio lo disegnera' alla fine
+                // evita che XLAST e YLAST siano aggiornati
+                if ( IMAGE_TEMP != null ) {
+                    // ripristina il disegno
+                    ctx.putImageData(IMAGE_TEMP, 0, 0);
+                }
+                IMAGE_TEMP = ctx.getImageData(0, 0, HSIZE, VSIZE);
+                // Disegna temporaneamente il rettangolo
+                ctx.beginPath();
+                ctx.arc(XLAST, YLAST, Math.sqrt(Math.pow(x-XLAST, 2) + Math.pow(y-YLAST, 2)), 0, 2*Math.PI);
+                if ( MODE == "C" ) ctx.fill();
+                ctx.stroke();
+                ctx.closePath();
+                return; // NON BREAK!!!
+            case "r":   // Il rettangolo lo disegnera' alla fine
+            case "R":   // Il rettangolo lo disegnera' alla fine
+                if ( IMAGE_TEMP != null ) {
+                    // ripristina il disegno
+                    ctx.putImageData(IMAGE_TEMP, 0, 0);
+                }
+                IMAGE_TEMP = ctx.getImageData(0, 0, HSIZE, VSIZE);
+                // Disegna temporaneamente il rettangolo
+                ctx.beginPath();
+                if ( MODE == "r" ) {
+                    ctx.strokeRect(XLAST, YLAST, x - XLAST, y - YLAST);
+                } else {
+                    ctx.fillRect(XLAST, YLAST, x - XLAST, y - YLAST);
+                }
+                ctx.closePath();
+                return; // NON BREAK!!!
+            }
+        }
+        XLAST = x;
+        YLAST = y;
+    }
+}
+
+
+/*  FATTO MISTERIOSO: la funzione seguente andrebbe richiamata con come parametri
+    (event.clientX, event.clientY) nel caso di mouse o (event.touches[0].clientX,
+    event.touches[0].clientY) nel caso di touchscreen. Se non che, chiamandola
+    cosi' sull'iPhone cancella il cerchio/rettangolo/linea dopo aver lasciato il
+    dito, mentre CHIAMATA SENZA PARAMETRI FUNZIONA!!! Sicuramente i valori delle
+    variabili (x,y) che usa sono quelli con i quali e' stata chiamata whiteboard_move
+    un attimo prima, comunque la cosa e' stranissima!!! */
+
+/// Quando si rilascia il mouse o il dito segna la fine del disegno
+function whiteboard_end(x, y)
+{
+    if ( MOUSE_DOWN ) {
+        var c = document.getElementById("grafico");
+        var ctx = c.getContext("2d");
+        ctx.strokeStyle = PEN_FGCOLOR;
+        ctx.fillStyle = PEN_FGCOLOR;
+        MOUSE_DOWN = false;
+        // Se si e' tracciato un cerchio o una linea li disegna adesso.
+        if ( IMAGE_TEMP != null ) { IMAGE_TEMP = null; } else
+        switch ( MODE ) {
+        case "c":
+        case "C":   // Disegna il cerchio di centro (XLAST,YLAST) passante per (x,y)
+            ctx.beginPath();
+            ctx.arc(XLAST, YLAST, Math.sqrt(Math.pow(x-XLAST, 2) + Math.pow(y-YLAST, 2)), 0, 2*Math.PI);
+            if ( MODE == "C" ) ctx.fill();
+            ctx.stroke();
+            ctx.closePath();
+            break;
+        case "L":   // Disegna il segmento fra (XLAST, YLAST) e (x,y)
+            ctx.strokeStyle = PEN_FGCOLOR;
+            ctx.beginPath();
+            ctx.moveTo(XLAST, YLAST);
+            ctx.lineTo(x, y);
+            ctx.stroke();
+            ctx.closePath();
+            break;
+        case "r":
+        case "R":   // Disegna il rettangolo di vertici opposti (XLAST,YLAST) e (x,y)
+            ctx.strokeStyle = PEN_FGCOLOR;
+            ctx.strokeStyle = PEN_FGCOLOR;
+            ctx.beginPath();
+            if ( MODE == "R" ) {
+                ctx.strokeRect(XLAST, YLAST, x - XLAST, y - YLAST);
+            } else {
+                ctx.fillRect(XLAST, YLAST, x - XLAST, y - YLAST);
+            }
+            ctx.closePath();
+        }
+        whiteboard_bar();
+    }
+}
+
+/// Quando si tocca un touchscreen.
+function touch_start(event)
+{
+    event.preventDefault();
+  
+    // Solo un dito e' consentito!!!
+    if ( event.touches.length == 1 ) {
+        whiteboard_start(event.touches[0].clientX, event.touches[0].clientY);
+    }
+}
+
+
+//]]>
+    </script>
+
+</head>
+
+<body style="background-color:black;" onload="whiteboard_init();" ontouchmove="event.preventDefault();"><canvas id="grafico" name="grafico" onmousedown="whiteboard_start(event.clientX, event.clientY)" onmouseup="whiteboard_end(event.clientX, event.clientY)" onmousemove="whiteboard_move(event.clientX, event.clientY)" ontouchstart="touch_start(event)" ontouchmove="whiteboard_move(event.touches[0].clientX, event.touches[0].clientY)" ontouchend="whiteboard_end()" ><p>Sorry, your browers does not support &lt;canvas&gt; tags (a HTML 5 feature):-(</p></canvas>
+<!-- METTERE QUI LA LISTA DELLE IMMAGINI DEGLI SFONDI -->
+    <img height="600" width="800" hidden src="la_Pagina_01.png" alt="01"></img>
+    <img height="600" width="800" hidden src="la_Pagina_02.png" alt="01"></img>
+    <img height="600" width="800" hidden src="la_Pagina_03.png" alt="01"></img>
+    <img height="600" width="800" hidden src="la_Pagina_04.png" alt="01"></img>
+    <img height="600" width="800" hidden src="la_Pagina_05.png" alt="01"></img>
+    <img height="600" width="800" hidden src="la_Pagina_06.png" alt="01"></img>
+    <img height="600" width="800" hidden src="la_Pagina_07.png" alt="01"></img>
+    <img height="600" width="800" hidden src="la_Pagina_08.png" alt="01"></img>
+    <img height="600" width="800" hidden src="la_Pagina_09.png" alt="01"></img>
+    <img height="600" width="800" hidden src="la_Pagina_10.png" alt="01"></img>
+    <img height="600" width="800" hidden src="la_Pagina_11.png" alt="01"></img>
+    <img height="600" width="800" hidden src="la_Pagina_12.png" alt="01"></img>
+    <img height="600" width="800" hidden src="la_Pagina_13.png" alt="01"></img>
+    <img height="600" width="800" hidden src="la_Pagina_14.png" alt="01"></img>
+    <img height="600" width="800" hidden src="la_Pagina_15.png" alt="01"></img>
+    <img height="600" width="800" hidden src="la_Pagina_16.png" alt="01"></img>
+    <img height="600" width="800" hidden src="la_Pagina_17.png" alt="01"></img>
+    <img height="600" width="800" hidden src="la_Pagina_18.png" alt="01"></img>
+    <img height="600" width="800" hidden src="la_Pagina_19.png" alt="01"></img>
+    <img height="600" width="800" hidden src="la_Pagina_20.png" alt="01"></img>
+    <img height="600" width="800" hidden src="la_Pagina_21.png" alt="01"></img>
+</body>
+</html>
